@@ -1,118 +1,118 @@
+-- Fetch Gross Revenue in Lacs for all records where ab = 1
 SELECT
-    'Gross Revenue (Lacs)' AS name,
-    br.monthcol,
+    'Gross Revenue (Lacs)' AS name, -- KPI name for display
+    br.monthcol, -- Month column
     ROUND(
         SUM(
             COALESCE(
-                br.grossbillamount::numeric(18, 0),
-                0::numeric(18, 0)
+                br.grossbillamount::numeric(18, 0), -- Gross bill amount
+                0::numeric(18, 0) -- Default to 0 if null
             )
-        ) / NULLIF(100000::numeric(18, 0), 0),
-        2
+        ) / NULLIF(100000::numeric(18, 0), 0), -- Convert to Lacs
+        2 -- Round to 2 decimal places
     ) AS actual,
-    br.facility,
-    br.financial_months,
-    br.lastdate,
-    1 AS pos,
+    br.facility, -- Facility name
+    br.financial_months, -- Financial month
+    br.lastdate, -- Last date of the record
+    1 AS pos, -- Position for ordering
     (
         'Gross Revenue (Lacs)'::character varying
         || br.facility::text
-        || br.lastdate::character varying
+        || br.lastdate::character varying -- Helper field for unique identification
     ) AS helper
 FROM
     bidata.billregisterreport br
 WHERE
-    br.ab = 1
-
+    br.ab = 1 -- Filter for valid records
 GROUP BY
     br.monthcol,
     br.facility,
     br.financial_months,
     br.lastdate
 
-
+-- Fetch Average Length of Stay (ALOS) for Cash patients
 UNION ALL
 SELECT
-  'ALOS - Cash' AS name,
-  a.monthcol,
-  round(
-    a.actual:: numeric:: numeric(18, 0) / b.actual:: numeric:: numeric(18, 0),
-    2
+  'ALOS - Cash' AS name, -- KPI name
+  a.monthcol, -- Month column
+  ROUND(
+    a.actual::numeric::numeric(18, 0) / b.actual::numeric::numeric(18, 0), -- Compute ALOS as occupied bed days / discharges
+    2 -- Round to 2 decimal places
   ) AS actual,
-  a.facility,
-  a.financial_months,
-  a.lastdate,
-  8 AS pos,
+  a.facility, -- Facility name
+  a.financial_months, -- Financial month
+  a.lastdate, -- Last date of the record
+  8 AS pos, -- Position for ordering
   (
-    'ALOS - Cash':: character varying:: text + a.facility:: text + a.lastdate:: character varying:: text
-  ):: character varying AS helper
+    'ALOS - Cash'::character varying::text + a.facility::text + a.lastdate::character varying::text -- Helper field
+  )::character varying AS helper
 FROM
   (
+    -- Subquery to calculate occupied bed days for Cash patients
     SELECT
-      'Occupied Bed Days':: character varying AS name,
-      billregisterreport.monthcol,
-      sum(billregisterreport.lengthofstay) AS actual,
-      billregisterreport.facility,
-      billregisterreport.financial_months,
-      billregisterreport.lastdate
+      'Occupied Bed Days'::character varying AS name, -- Subquery KPI name
+      billregisterreport.monthcol, -- Month column
+      SUM(billregisterreport.lengthofstay) AS actual, -- Total length of stay
+      billregisterreport.facility, -- Facility name
+      billregisterreport.financial_months, -- Financial month
+      billregisterreport.lastdate -- Last date of the record
     FROM
       bidata.billregisterreport
     WHERE
-      billregisterreport.patientclass:: text = 'IP':: character varying:: text
-      AND billregisterreport.ab = 1 
-      AND "actual payor category" = 'CASH'
- 
-GROUP BY
+      billregisterreport.patientclass::text = 'IP'::character varying::text -- Filter for inpatients
+      AND billregisterreport.ab = 1 -- Valid records
+      AND "actual payor category" = 'CASH' -- Filter for cash payor category
+    GROUP BY
       billregisterreport.monthcol,
       billregisterreport.facility,
       billregisterreport.financial_months,
       billregisterreport.lastdate
   ) a
   JOIN (
+    -- Subquery to calculate IPD patient discharges for Cash
     SELECT
-      'IPD Patients (Volume) : Discharges':: character varying AS name,
-      a.monthcol,
-      count(a.uhid) - COALESCE(b.ipv, 0:: bigint) AS actual,
-      a.facility,
-      a.financial_months,
-      a.lastdate
+      'IPD Patients (Volume) : Discharges'::character varying AS name, -- Subquery KPI name
+      a.monthcol, -- Month column
+      COUNT(a.uhid) - COALESCE(b.ipv, 0::bigint) AS actual, -- Total discharges after excluding cancelled invoices
+      a.facility, -- Facility name
+      a.financial_months, -- Financial month
+      a.lastdate -- Last date of the record
     FROM
       bidata.billregisterreport a
       LEFT JOIN (
+        -- Subquery to calculate cancelled invoices for IP patients
         SELECT
-          count(billregisterreport.uhid) * 2 AS ipv,
-          billregisterreport.monthcol,
-          billregisterreport.facility,
-          billregisterreport.financial_months,
-          billregisterreport.lastdate
+          COUNT(billregisterreport.uhid) * 2 AS ipv, -- Multiplier for cancelled invoices
+          billregisterreport.monthcol, -- Month column
+          billregisterreport.facility, -- Facility name
+          billregisterreport.financial_months, -- Financial month
+          billregisterreport.lastdate -- Last date of the record
         FROM
           bidata.billregisterreport
         WHERE
-          lower(billregisterreport.patientclass:: text) = 'ip':: character varying:: text
-          AND upper(billregisterreport.status:: text) = 'IP CANCELLED INVOICE':: character varying:: text
-          AND billregisterreport.ab = 1
-          AND "actual payor category" = 'CASH'
-      
+          LOWER(billregisterreport.patientclass::text) = 'ip'::character varying::text -- Inpatient records
+          AND UPPER(billregisterreport.status::text) = 'IP CANCELLED INVOICE'::character varying::text -- Cancelled invoices
+          AND billregisterreport.ab = 1 -- Valid records
+          AND "actual payor category" = 'CASH' -- Filter for cash payor category
         GROUP BY
           billregisterreport.monthcol,
           billregisterreport.facility,
           billregisterreport.financial_months,
           billregisterreport.lastdate
       ) b ON a.monthcol = b.monthcol
-      AND a.facility:: text = b.facility:: text
+      AND a.facility::text = b.facility::text
       AND a.lastdate = b.lastdate
     WHERE
-      lower(a.patientclass:: text) = 'ip':: character varying:: text
-      AND a.ab = 1
-      AND "actual payor category" = 'CASH'
-      
+      LOWER(a.patientclass::text) = 'ip'::character varying::text -- Inpatient records
+      AND a.ab = 1 -- Valid records
+      AND "actual payor category" = 'CASH' -- Filter for cash payor category
     GROUP BY
       a.monthcol,
       a.facility,
       a.financial_months,
       b.ipv,
       a.lastdate
-  ) b ON a.facility:: text = b.facility:: text
+  ) b ON a.facility::text = b.facility::text
   AND a.monthcol = b.monthcol
   AND a.lastdate = b.lastdate
 
